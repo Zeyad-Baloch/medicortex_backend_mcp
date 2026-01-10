@@ -7,8 +7,8 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 from typing import Any
 
+FASTAPI_BASE_URL = "http://127.0.0.1:8000"
 
-FASTAPI_BASE_URL = "http://localhost:8000"
 
 
 mcp = Server("medicortex-health-agent")
