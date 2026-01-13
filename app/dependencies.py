@@ -45,3 +45,16 @@ def get_anomaly_service(storage: BaseStorage = None) -> AnomalyService:
     if storage is None:
         storage = get_storage()
     return AnomalyService(storage)
+
+
+# ============================================================================
+# NEW - OCR SERVICE
+# ============================================================================
+from app.services.ocr import OCRService  # Add this import at top
+
+
+def get_ocr_service(storage: BaseStorage = None) -> OCRService:
+    """Get OCR service with injected storage."""
+    if storage is None:
+        storage = get_storage()
+    return OCRService(storage)

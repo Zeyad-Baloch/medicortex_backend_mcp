@@ -1,5 +1,6 @@
 """
 Machine Learning models for baseline learning and anomaly detection.
+Contains BaselineLearner, ZScoreDetector, IsolationForestDetector, and ConsensusDetector.
 """
 import pandas as pd
 import numpy as np

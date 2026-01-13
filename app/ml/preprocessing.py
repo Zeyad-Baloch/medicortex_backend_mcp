@@ -1,5 +1,6 @@
 """
 Data preprocessing and feature engineering for health data.
+Contains HealthDataPreprocessor and FeatureEngineer classes.
 """
 import pandas as pd
 

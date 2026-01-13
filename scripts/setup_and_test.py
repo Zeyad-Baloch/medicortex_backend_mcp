@@ -1,5 +1,6 @@
 """
 Complete workflow: Train baseline → Detect anomalies
+Run this before using mcp_client_groq.py
 """
 
 import requests
@@ -146,5 +147,5 @@ except Exception as e:
 
 print("\n" + "=" * 70)
 print("✅ Setup Complete! Now you can use:")
-print("   python mcp_client.py")
+print("   python mcp_client_groq.py")
 print("=" * 70)

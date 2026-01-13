@@ -1,8 +1,10 @@
 """
 Pydantic models for API request/response validation.
+All schemas in one place for easy reference.
 """
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -141,3 +143,156 @@ class HealthCheckResponse(BaseModel):
     users_with_baselines: int
     total_models: int
     storage_type: str
+
+
+# ============================================================================
+# OCR MODELS
+# ============================================================================
+
+
+
+class ExtractedValue(BaseModel):
+    """Single extracted health metric value."""
+    value: Optional[float] = None
+    unit: Optional[str] = None
+    raw: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "value": 120.0,
+                "unit": "mg/dL",
+                "raw": "glucose: 120 mg/dL"
+            }
+        }
+
+
+class BloodPressureValue(BaseModel):
+    """Blood pressure with systolic/diastolic."""
+    systolic: float
+    diastolic: float
+    unit: str = "mmHg"
+    formatted: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "systolic": 130.0,
+                "diastolic": 85.0,
+                "unit": "mmHg",
+                "formatted": "130/85"
+            }
+        }
+
+
+class HealthAlert(BaseModel):
+    """Alert for abnormal health values."""
+    metric: str
+    value: Any
+    severity: str = Field(..., description="low, medium, or high")
+    message: str
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "metric": "glucose",
+                "value": 145.0,
+                "severity": "high",
+                "message": "Glucose elevated (145 vs normal 70-100 mg/dL)"
+            }
+        }
+
+
+class PatientInfo(BaseModel):
+    """Extracted patient demographic information."""
+    name: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    report_date: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "name": "John Doe",
+                "age": 45,
+                "gender": "Male",
+                "report_date": "January 12, 2026"
+            }
+        }
+
+
+class OCRExtractResponse(BaseModel):
+    """Response after extracting text from medical report - NOW WITH PARSING!"""
+    status: str
+    report_id: str
+    user_id: str
+    extracted_text: str
+    confidence: float = Field(..., ge=0, le=1, description="OCR confidence score")
+    report_type: Optional[str] = None
+    keywords: List[str] = Field(default_factory=list)
+    created_at: str
+
+    # NEW - Parsed data fields
+    parsed_values: Dict[str, Any] = Field(default_factory=dict, description="Structured health values")
+    patient_info: Dict[str, Any] = Field(default_factory=dict, description="Patient demographics")
+    alerts: List[Dict[str, Any]] = Field(default_factory=list, description="Health alerts for abnormal values")
+    metrics_found: int = Field(0, description="Number of health metrics extracted")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "success",
+                "report_id": "report_abc123xyz",
+                "user_id": "user_123",
+                "extracted_text": "Patient: John Doe\nGlucose: 120 mg/dL...",
+                "confidence": 0.95,
+                "report_type": "lab_report",
+                "keywords": ["glucose", "blood_pressure"],
+                "created_at": "2026-01-12T10:30:00",
+                "parsed_values": {
+                    "glucose": {"value": 120.0, "unit": "mg/dL"},
+                    "blood_pressure": {"systolic": 130, "diastolic": 85, "formatted": "130/85"},
+                    "heart_rate": {"value": 78.0, "unit": "bpm"}
+                },
+                "patient_info": {
+                    "name": "John Doe",
+                    "age": 45,
+                    "gender": "Male"
+                },
+                "alerts": [
+                    {
+                        "metric": "glucose",
+                        "value": 120.0,
+                        "severity": "medium",
+                        "message": "Glucose elevated (120 vs normal 70-100 mg/dL)"
+                    }
+                ],
+                "metrics_found": 5
+            }
+        }
+
+
+class OCRReportDetail(BaseModel):
+    """Single OCR report details - WITH PARSED DATA."""
+    report_id: str
+    user_id: str
+    extracted_text: str
+    confidence: float
+    report_type: Optional[str] = None
+    keywords: List[str] = Field(default_factory=list)
+    created_at: str
+
+    # NEW - Parsed data
+    parsed_values: Dict[str, Any] = Field(default_factory=dict)
+    patient_info: Dict[str, Any] = Field(default_factory=dict)
+    alerts: List[Dict[str, Any]] = Field(default_factory=list)
+    metrics_found: int = 0
+
+
+class OCRReportsListResponse(BaseModel):
+    """List of user's OCR reports."""
+    status: str
+    user_id: str
+    total_reports: int
+    reports: List[OCRReportDetail]
+

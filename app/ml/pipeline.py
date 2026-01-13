@@ -1,5 +1,5 @@
 """
-ML Pipeline for baseline training and anomaly detection.
+ML Pipeline orchestrator for baseline training and anomaly detection.
 Chains preprocessing, feature engineering, and ML models.
 """
 import pandas as pd
