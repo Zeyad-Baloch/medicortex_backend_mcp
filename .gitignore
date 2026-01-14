@@ -29,15 +29,12 @@ ENV/
 env/
 
 # IDE
-.vscode/
 .idea/
 *.swp
 *.swo
 *~
 
 # Environment variables
-.env
-.env.local
 
 # Database
 *.db
@@ -60,3 +57,5 @@ htmlcov/
 
 # MCP
 mcp_server.log
+config.bat
+node_modules
