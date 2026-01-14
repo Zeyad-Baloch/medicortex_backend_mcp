@@ -40,7 +40,7 @@ class BaseStorage(ABC):
         pass
 
     # ============================================================================
-    # NEW - OCR STORAGE METHODS
+    # OCR STORAGE METHODS
     # ============================================================================
 
     @abstractmethod
@@ -64,7 +64,52 @@ class BaseStorage(ABC):
         pass
 
     # ============================================================================
-    # EXISTING SERIALIZATION METHODS
+    # NEW - HEALTH DATA HISTORY METHODS
+    # ============================================================================
+
+    @abstractmethod
+    async def save_health_data(self, user_id: str, data_points: List[Dict]) -> bool:
+        """Save multiple health data points to history."""
+        pass
+
+    @abstractmethod
+    async def get_health_data_range(self, user_id: str, start_date: str = None,
+                                   end_date: str = None, limit: int = None) -> List[Dict]:
+        """Get health data for a user within a date range."""
+        pass
+
+    @abstractmethod
+    async def get_latest_health_data(self, user_id: str) -> Optional[Dict]:
+        """Get the most recent health data point for a user."""
+        pass
+
+    @abstractmethod
+    async def get_health_data_stats(self, user_id: str, days: int = 30) -> Dict:
+        """Get aggregated statistics for health data over a time period."""
+        pass
+
+    # ============================================================================
+    # NEW - ANOMALY HISTORY METHODS
+    # ============================================================================
+
+    @abstractmethod
+    async def save_anomalies(self, user_id: str, anomalies: List[Dict]) -> bool:
+        """Save detected anomalies to history."""
+        pass
+
+    @abstractmethod
+    async def get_anomaly_history(self, user_id: str, days: int = 30,
+                                 risk_level: str = None) -> List[Dict]:
+        """Get anomaly history for a user."""
+        pass
+
+    @abstractmethod
+    async def get_anomaly_counts(self, user_id: str, days: int = 30) -> Dict:
+        """Get count of anomalies by risk level."""
+        pass
+
+    # ============================================================================
+    # SERIALIZATION METHODS
     # ============================================================================
 
     def serialize_models(self, models: Dict, scalers: Dict) -> bytes:

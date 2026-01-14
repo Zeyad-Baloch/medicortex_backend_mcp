@@ -1,4 +1,6 @@
-
+"""
+OCR endpoints for medical report text extraction.
+"""
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from typing import Optional
 from app.api.schemas import (

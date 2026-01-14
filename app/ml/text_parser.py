@@ -1,4 +1,7 @@
-
+"""
+AI-Powered Medical Text Parser using Groq.
+FIXED: Uses app settings for API key.
+"""
 import json
 from typing import Dict, Any
 from datetime import datetime
@@ -10,6 +13,7 @@ class MedicalTextParser:
     """Parse medical report text using Groq AI."""
 
     def __init__(self):
+        # FIXED: Get API key from settings (which loads from .env)
         api_key = settings.GROQ_API_KEY
         if not api_key:
             raise ValueError("GROQ_API_KEY not found in settings. Add it to .env file.")
