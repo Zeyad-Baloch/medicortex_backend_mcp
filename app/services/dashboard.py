@@ -1,5 +1,5 @@
 """
-Dashboard service
+Dashboard service - handles dashboard data aggregation and analysis.
 """
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
@@ -13,7 +13,15 @@ class DashboardService:
         self.storage = storage
 
     async def get_overview(self, user_id: str) -> Dict:
-        """Get complete dashboard overview for a user."""
+        """
+        Get complete dashboard overview for a user.
+
+        Args:
+            user_id: Unique user identifier
+
+        Returns:
+            Dict with overview data
+        """
         # Check if user has baseline
         baseline = await self.storage.get_baseline(user_id)
         has_baseline = baseline is not None
@@ -57,7 +65,17 @@ class DashboardService:
         }
 
     async def get_trends(self, user_id: str, days: int = 7, metrics: List[str] = None) -> Dict:
-        """Get time-series trend data for charts."""
+        """
+        Get time-series trend data for charts.
+
+        Args:
+            user_id: Unique user identifier
+            days: Number of days to include
+            metrics: List of metrics to include (default: all)
+
+        Returns:
+            Dict with trend data
+        """
         # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
@@ -122,7 +140,17 @@ class DashboardService:
         }
 
     async def get_anomaly_history(self, user_id: str, days: int = 30, risk_level: str = None) -> Dict:
-        """Get anomaly history for dashboard."""
+        """
+        Get anomaly history for dashboard.
+
+        Args:
+            user_id: Unique user identifier
+            days: Number of days to include
+            risk_level: Filter by risk level (High, Medium, Low)
+
+        Returns:
+            Dict with anomaly history
+        """
         # Get anomaly history
         anomalies = await self.storage.get_anomaly_history(user_id, days, risk_level)
 
@@ -155,7 +183,15 @@ class DashboardService:
         }
 
     async def get_health_score(self, user_id: str) -> Dict:
-        """Calculate comprehensive health score."""
+        """
+        Calculate comprehensive health score.
+
+        Args:
+            user_id: Unique user identifier
+
+        Returns:
+            Dict with health score and details
+        """
         # Get baseline
         baseline = await self.storage.get_baseline(user_id)
         if not baseline:
@@ -180,7 +216,16 @@ class DashboardService:
         }
 
     async def get_stats(self, user_id: str, days: int = 30) -> Dict:
-        """Get aggregated statistics with baseline comparison."""
+        """
+        Get aggregated statistics with baseline comparison.
+
+        Args:
+            user_id: Unique user identifier
+            days: Number of days for statistics
+
+        Returns:
+            Dict with aggregated stats
+        """
         # Get baseline
         baseline = await self.storage.get_baseline(user_id)
         if not baseline:
@@ -232,20 +277,12 @@ class DashboardService:
         }
 
     # ============================================================================
-    # IMPROVED SCORING ALGORITHM - More forgiving!
+    # PRIVATE HELPER METHODS
     # ============================================================================
 
     async def _calculate_health_score(self, user_id: str, baseline: Dict,
                                       recent_stats: Dict, anomaly_counts: Dict) -> Dict:
-        """
-        Calculate health score with IMPROVED, MORE FORGIVING algorithm.
-
-        Changes:
-        - Wider "excellent" range (Z-score ≤ 1.5 instead of ≤ 1.0)
-        - Lower anomaly penalties (50% reduction)
-        - Bonus points for having data
-        - More generous scoring brackets
-        """
+        """Calculate overall health score (0-100)."""
         if recent_stats.get('total_readings', 0) == 0:
             return {
                 "health_score": 0.0,
@@ -261,7 +298,11 @@ class DashboardService:
         negative_factors = []
         recommendations = []
 
-        # ✅ IMPROVED: More forgiving metric scoring
+        # Define ideal directions for each metric
+        lower_is_better = {'heart_rate', 'stress_level'}
+        higher_is_better = {'steps', 'sleep_quality', 'calories'}
+
+        # Score each metric (0-100)
         for metric in ['heart_rate', 'steps', 'sleep_quality', 'stress_level', 'calories']:
             if metric not in recent_stats or 'avg' not in recent_stats[metric]:
                 continue
@@ -270,78 +311,145 @@ class DashboardService:
             baseline_mean = baseline[metric]['mean']
             baseline_std = baseline[metric]['std']
 
-            # Calculate Z-score
-            z_score = abs((current_avg - baseline_mean) / baseline_std) if baseline_std > 0 else 0
+            # Skip if baseline std is 0 (no variation in training data)
+            if baseline_std == 0:
+                metric_scores[metric] = 100  # Assume good if no variation
+                continue
 
-            # ✅ NEW SCORING: More forgiving thresholds
-            if z_score <= 1.5:
-                score = 100  # ← Was 1.0, now 1.5 (50% more forgiving!)
-                positive_factors.append(f"{metric.replace('_', ' ').title()} is excellent")
-            elif z_score <= 2.5:
-                score = 85  # ← Was 80, now 85
-                positive_factors.append(f"{metric.replace('_', ' ').title()} is good")
-            elif z_score <= 3.5:
-                score = 70  # ← Was 60, now 70
+            # Calculate Z-score (how many std devs away from baseline)
+            z_score = (current_avg - baseline_mean) / baseline_std
+            abs_z = abs(z_score)
+
+            # Base score on how close to baseline (0-100)
+            if abs_z <= 0.5:
+                base_score = 100  # Very close to baseline
+            elif abs_z <= 1.0:
+                base_score = 95  # Within 1 std dev
+            elif abs_z <= 1.5:
+                base_score = 85  # Within 1.5 std dev
+            elif abs_z <= 2.0:
+                base_score = 75  # Within 2 std dev
+            elif abs_z <= 2.5:
+                base_score = 60  # Getting concerning
             else:
-                score = 55  # ← Was 40, now 55 (more forgiving!)
+                base_score = 50  # Significantly different
 
-            metric_scores[metric] = score
+            # Apply directional adjustment
+            # Positive z_score means current > baseline
+            # Negative z_score means current < baseline
+            direction_bonus = 0
 
-            # Add negative factors only if really bad
-            if score < 60:
-                negative_factors.append(f"{metric.replace('_', ' ').title()} deviating significantly")
-                recommendations.append(f"Monitor {metric.replace('_', ' ')} more closely")
+            if metric in lower_is_better:
+                # For heart_rate and stress: lower is better
+                if z_score < -0.5:  # Current is lower than baseline (good!)
+                    direction_bonus = min(5, abs(z_score) * 2)
+                    if abs_z >= 1.0:
+                        positive_factors.append(
+                            f"{metric.replace('_', ' ').title()} reduced from baseline (healthy)"
+                        )
+                elif z_score > 1.0:  # Current is higher than baseline (bad)
+                    direction_bonus = max(-10, -z_score * 3)
+                    negative_factors.append(
+                        f"{metric.replace('_', ' ').title()} elevated above baseline"
+                    )
+                    recommendations.append(
+                        f"Work on reducing {metric.replace('_', ' ')}"
+                    )
 
-        # ✅ REDUCED ANOMALY PENALTIES (50% reduction)
-        anomaly_penalty = (
-                anomaly_counts.get('High', 0) * 5 +  # Was 10, now 5
-                anomaly_counts.get('Medium', 0) * 2 +  # Was 5, now 2
-                anomaly_counts.get('Low', 0) * 1  # Was 2, now 1
+            elif metric in higher_is_better:
+                # For steps, sleep_quality, calories: higher is better
+                if z_score > 0.5:  # Current is higher than baseline (good!)
+                    direction_bonus = min(5, z_score * 2)
+                    if abs_z >= 1.0:
+                        positive_factors.append(
+                            f"{metric.replace('_', ' ').title()} improved from baseline"
+                        )
+                elif z_score < -1.0:  # Current is lower than baseline (bad)
+                    direction_bonus = max(-10, z_score * 3)
+                    negative_factors.append(
+                        f"{metric.replace('_', ' ').title()} declined from baseline"
+                    )
+                    recommendations.append(
+                        f"Try to improve {metric.replace('_', ' ')}"
+                    )
+
+            # Calculate final metric score
+            final_metric_score = max(0, min(100, base_score + direction_bonus))
+            metric_scores[metric] = final_metric_score
+
+        # Calculate average of all metric scores
+        if metric_scores:
+            avg_metric_score = sum(metric_scores.values()) / len(metric_scores)
+        else:
+            return {
+                "health_score": 50.0,
+                "health_status": "Insufficient Data",
+                "metric_scores": {},
+                "positive_factors": ["Not enough metrics available"],
+                "negative_factors": [],
+                "recommendations": ["Ensure all health metrics are being tracked"]
+            }
+
+        # Apply moderate anomaly penalty
+        total_anomalies = (
+                anomaly_counts.get('High', 0) +
+                anomaly_counts.get('Medium', 0) +
+                anomaly_counts.get('Low', 0)
         )
 
+        # Calculate penalty based on severity
+        raw_penalty = (
+                anomaly_counts.get('High', 0) * 4 +  # 4 points per high-risk
+                anomaly_counts.get('Medium', 0) * 2 +  # 2 points per medium
+                anomaly_counts.get('Low', 0) * 0.5  # 0.5 points per low
+        )
+
+        # Cap the penalty at 15 points maximum
+        anomaly_penalty = min(15, raw_penalty)
+
+        # Apply the penalty
+        final_score = max(0, min(100, avg_metric_score - anomaly_penalty))
+
+        # Add anomaly-related factors
         if anomaly_counts.get('High', 0) > 0:
-            negative_factors.append(f"{anomaly_counts['High']} high-risk anomalies detected")
-            recommendations.append("Review high-risk anomalies with healthcare provider")
+            negative_factors.append(
+                f"Detected {anomaly_counts['High']} high-risk anomal{'y' if anomaly_counts['High'] == 1 else 'ies'}"
+            )
+            recommendations.append(
+                "Consult healthcare provider about high-risk anomalies"
+            )
 
-        # Calculate base score
-        if metric_scores:
-            base_score = sum(metric_scores.values()) / len(metric_scores)
-        else:
-            base_score = 0
+        if total_anomalies == 0:
+            positive_factors.append("No anomalies detected in recent period")
 
-        # ✅ BONUS: Add points for having good data coverage
-        data_bonus = 0
-        if recent_stats.get('total_readings', 0) >= 20:
-            data_bonus = 5  # +5 points for good data coverage
-            positive_factors.append("Consistent health tracking")
-
-        # Calculate final score
-        final_score = base_score - anomaly_penalty + data_bonus
-        final_score = max(0, min(100, final_score))
-
-        # ✅ MORE GENEROUS STATUS THRESHOLDS
-        if final_score >= 80:
-            status = "Excellent"  # Was 85
-        elif final_score >= 65:
-            status = "Good"  # Was 70
+        # Determine health status
+        if final_score >= 90:
+            status = "Excellent"
+        elif final_score >= 75:
+            status = "Good"
+        elif final_score >= 60:
+            status = "Fair"
         elif final_score >= 45:
-            status = "Fair"  # Was 50
+            status = "Needs Attention"
         else:
             status = "Poor"
 
-        # Add general recommendations
-        if final_score < 65:
-            recommendations.append("Review recent health patterns and adjust habits")
-        elif final_score >= 80:
-            positive_factors.append("Overall health is excellent!")
+        # Add encouraging factor if score is good
+        if final_score >= 80:
+            positive_factors.append("Maintaining healthy metrics overall")
+
+        # Remove duplicates while preserving order
+        positive_factors = list(dict.fromkeys(positive_factors))[:5]
+        negative_factors = list(dict.fromkeys(negative_factors))[:5]
+        recommendations = list(dict.fromkeys(recommendations))[:5]
 
         return {
             "health_score": round(final_score, 1),
             "health_status": status,
             "metric_scores": {k: round(v, 1) for k, v in metric_scores.items()},
-            "positive_factors": positive_factors[:5],
-            "negative_factors": negative_factors[:5],
-            "recommendations": recommendations[:5]
+            "positive_factors": positive_factors,
+            "negative_factors": negative_factors,
+            "recommendations": recommendations
         }
 
     def _calculate_trend(self, values: List[float]) -> str:
