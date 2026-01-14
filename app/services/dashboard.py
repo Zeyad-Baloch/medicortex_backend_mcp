@@ -1,0 +1,400 @@
+"""
+Dashboard service - handles dashboard data aggregation and analysis.
+"""
+from typing import Dict, List, Optional
+from datetime import datetime, timedelta
+from app.storage.base import BaseStorage
+
+
+class DashboardService:
+    """Service for dashboard data aggregation and health scoring."""
+
+    def __init__(self, storage: BaseStorage):
+        self.storage = storage
+
+    async def get_overview(self, user_id: str) -> Dict:
+        """
+        Get complete dashboard overview for a user.
+
+        Args:
+            user_id: Unique user identifier
+
+        Returns:
+            Dict with overview data
+        """
+        # Check if user has baseline
+        baseline = await self.storage.get_baseline(user_id)
+        has_baseline = baseline is not None
+
+        if not has_baseline:
+            return {
+                "status": "error",
+                "message": f"No baseline found for user {user_id}. Please train baseline first.",
+                "user_id": user_id,
+                "has_baseline": False
+            }
+
+        # Get latest reading
+        latest_reading = await self.storage.get_latest_health_data(user_id)
+
+        # Get recent stats (last 7 days)
+        recent_stats = await self.storage.get_health_data_stats(user_id, days=7)
+
+        # Get recent anomaly counts (last 7 days)
+        anomaly_counts = await self.storage.get_anomaly_counts(user_id, days=7)
+
+        # Calculate health score
+        health_score_data = await self._calculate_health_score(
+            user_id, baseline, recent_stats, anomaly_counts
+        )
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "has_baseline": True,
+            "latest_reading": latest_reading,
+            "latest_reading_time": latest_reading.get('timestamp') if latest_reading else None,
+            "recent_stats": recent_stats,
+            "total_readings": recent_stats.get('total_readings', 0),
+            "recent_anomaly_count": anomaly_counts.get('total', 0),
+            "high_risk_anomalies": anomaly_counts.get('High', 0),
+            "medium_risk_anomalies": anomaly_counts.get('Medium', 0),
+            "low_risk_anomalies": anomaly_counts.get('Low', 0),
+            "health_score": health_score_data.get('health_score'),
+            "health_status": health_score_data.get('health_status')
+        }
+
+    async def get_trends(self, user_id: str, days: int = 7, metrics: List[str] = None) -> Dict:
+        """
+        Get time-series trend data for charts.
+
+        Args:
+            user_id: Unique user identifier
+            days: Number of days to include
+            metrics: List of metrics to include (default: all)
+
+        Returns:
+            Dict with trend data
+        """
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        # Get health data for range
+        data = await self.storage.get_health_data_range(
+            user_id,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat()
+        )
+
+        if not data:
+            return {
+                "status": "error",
+                "message": f"No health data found for user {user_id}",
+                "user_id": user_id,
+                "days": days,
+                "metrics": []
+            }
+
+        # Default metrics
+        if metrics is None:
+            metrics = ['heart_rate', 'steps', 'sleep_quality', 'stress_level', 'calories']
+
+        # Build trend data for each metric
+        metric_trends = []
+        for metric in metrics:
+            trend_data = []
+            values = []
+
+            for point in data:
+                value = point.get(metric)
+                if value is not None:
+                    trend_data.append({
+                        'timestamp': point['timestamp'],
+                        'value': float(value)
+                    })
+                    values.append(float(value))
+
+            if values:
+                avg = sum(values) / len(values)
+                min_val = min(values)
+                max_val = max(values)
+
+                # Determine trend (simple linear regression)
+                trend = self._calculate_trend(values)
+
+                metric_trends.append({
+                    'metric': metric.replace('_', ' ').title(),
+                    'data': trend_data,
+                    'avg': round(avg, 2),
+                    'min': round(min_val, 2),
+                    'max': round(max_val, 2),
+                    'trend': trend
+                })
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "days": days,
+            "metrics": metric_trends
+        }
+
+    async def get_anomaly_history(self, user_id: str, days: int = 30, risk_level: str = None) -> Dict:
+        """
+        Get anomaly history for dashboard.
+
+        Args:
+            user_id: Unique user identifier
+            days: Number of days to include
+            risk_level: Filter by risk level (High, Medium, Low)
+
+        Returns:
+            Dict with anomaly history
+        """
+        # Get anomaly history
+        anomalies = await self.storage.get_anomaly_history(user_id, days, risk_level)
+
+        # Get counts
+        counts = await self.storage.get_anomaly_counts(user_id, days)
+
+        # Format anomalies
+        formatted_anomalies = []
+        for anomaly in anomalies:
+            formatted_anomalies.append({
+                'timestamp': anomaly['timestamp'],
+                'metric': anomaly['metric'],
+                'current_value': round(anomaly['current_value'], 2),
+                'baseline_value': round(anomaly['baseline_value'], 2),
+                'deviation_pct': round(anomaly['deviation_pct'], 2),
+                'risk_level': anomaly['risk_level'],
+                'confidence': round(anomaly['confidence'], 2),
+                'detected_at': anomaly['detected_at']
+            })
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "days": days,
+            "total_anomalies": counts.get('total', 0),
+            "high_risk_count": counts.get('High', 0),
+            "medium_risk_count": counts.get('Medium', 0),
+            "low_risk_count": counts.get('Low', 0),
+            "anomalies": formatted_anomalies
+        }
+
+    async def get_health_score(self, user_id: str) -> Dict:
+        """
+        Calculate comprehensive health score.
+
+        Args:
+            user_id: Unique user identifier
+
+        Returns:
+            Dict with health score and details
+        """
+        # Get baseline
+        baseline = await self.storage.get_baseline(user_id)
+        if not baseline:
+            return {
+                "status": "error",
+                "message": f"No baseline found for user {user_id}"
+            }
+
+        # Get recent stats and anomalies
+        recent_stats = await self.storage.get_health_data_stats(user_id, days=7)
+        anomaly_counts = await self.storage.get_anomaly_counts(user_id, days=7)
+
+        # Calculate score
+        score_data = await self._calculate_health_score(
+            user_id, baseline, recent_stats, anomaly_counts
+        )
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            **score_data
+        }
+
+    async def get_stats(self, user_id: str, days: int = 30) -> Dict:
+        """
+        Get aggregated statistics with baseline comparison.
+
+        Args:
+            user_id: Unique user identifier
+            days: Number of days for statistics
+
+        Returns:
+            Dict with aggregated stats
+        """
+        # Get baseline
+        baseline = await self.storage.get_baseline(user_id)
+        if not baseline:
+            return {
+                "status": "error",
+                "message": f"No baseline found for user {user_id}"
+            }
+
+        # Get stats
+        stats = await self.storage.get_health_data_stats(user_id, days)
+
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        # Compare with baseline
+        vs_baseline = {}
+        for metric in ['heart_rate', 'steps', 'sleep_quality', 'stress_level', 'calories']:
+            if metric in stats and 'avg' in stats[metric]:
+                current_avg = stats[metric]['avg']
+                baseline_mean = baseline[metric]['mean']
+
+                deviation = current_avg - baseline_mean
+                deviation_pct = (deviation / baseline_mean) * 100
+
+                # Determine status (better/worse depends on metric)
+                if metric in ['heart_rate', 'stress_level']:
+                    # Lower is better for these metrics
+                    status = "better" if deviation < 0 else "worse"
+                else:
+                    # Higher is better for these metrics
+                    status = "better" if deviation > 0 else "worse"
+
+                vs_baseline[metric] = {
+                    "deviation": round(deviation, 2),
+                    "deviation_pct": round(deviation_pct, 2),
+                    "status": status if abs(deviation_pct) > 5 else "stable"
+                }
+
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "period": f"Last {days} days",
+            "start_date": start_date.strftime("%Y-%m-%d"),
+            "end_date": end_date.strftime("%Y-%m-%d"),
+            "stats": stats,
+            "total_readings": stats.get('total_readings', 0),
+            "vs_baseline": vs_baseline
+        }
+
+    # ============================================================================
+    # PRIVATE HELPER METHODS
+    # ============================================================================
+
+    async def _calculate_health_score(self, user_id: str, baseline: Dict,
+                                      recent_stats: Dict, anomaly_counts: Dict) -> Dict:
+        """Calculate overall health score (0-100)."""
+        if recent_stats.get('total_readings', 0) == 0:
+            return {
+                "health_score": 0.0,
+                "health_status": "No Data",
+                "metric_scores": {},
+                "positive_factors": [],
+                "negative_factors": [],
+                "recommendations": ["Start recording health data to get a health score"]
+            }
+
+        metric_scores = {}
+        positive_factors = []
+        negative_factors = []
+        recommendations = []
+
+        # Score each metric (0-100)
+        for metric in ['heart_rate', 'steps', 'sleep_quality', 'stress_level', 'calories']:
+            if metric not in recent_stats or 'avg' not in recent_stats[metric]:
+                continue
+
+            current_avg = recent_stats[metric]['avg']
+            baseline_mean = baseline[metric]['mean']
+            baseline_std = baseline[metric]['std']
+
+            # Calculate Z-score
+            z_score = abs((current_avg - baseline_mean) / baseline_std) if baseline_std > 0 else 0
+
+            # Convert to score (closer to baseline = higher score)
+            if z_score <= 1:
+                score = 100
+            elif z_score <= 2:
+                score = 80
+            elif z_score <= 3:
+                score = 60
+            else:
+                score = 40
+
+            metric_scores[metric] = score
+
+            # Add factors
+            if score >= 90:
+                positive_factors.append(f"{metric.replace('_', ' ').title()} consistently within normal range")
+            elif score < 60:
+                negative_factors.append(f"{metric.replace('_', ' ').title()} deviating from normal")
+                recommendations.append(f"Monitor {metric.replace('_', ' ')} more closely")
+
+        # Factor in anomalies
+        anomaly_penalty = (
+                anomaly_counts.get('High', 0) * 10 +
+                anomaly_counts.get('Medium', 0) * 5 +
+                anomaly_counts.get('Low', 0) * 2
+        )
+
+        if anomaly_counts.get('High', 0) > 0:
+            negative_factors.append(f"{anomaly_counts['High']} high-risk anomalies in past 7 days")
+            recommendations.append("Consult healthcare provider about high-risk anomalies")
+
+        # Calculate overall score
+        if metric_scores:
+            base_score = sum(metric_scores.values()) / len(metric_scores)
+            final_score = max(0, min(100, base_score - anomaly_penalty))
+        else:
+            final_score = 0
+
+        # Determine status
+        if final_score >= 85:
+            status = "Excellent"
+        elif final_score >= 70:
+            status = "Good"
+        elif final_score >= 50:
+            status = "Fair"
+        else:
+            status = "Poor"
+
+        # Add general recommendations
+        if final_score < 70:
+            recommendations.append("Review recent anomalies and adjust health habits")
+
+        return {
+            "health_score": round(final_score, 1),
+            "health_status": status,
+            "metric_scores": {k: round(v, 1) for k, v in metric_scores.items()},
+            "positive_factors": positive_factors[:5],  # Top 5
+            "negative_factors": negative_factors[:5],  # Top 5
+            "recommendations": recommendations[:5]  # Top 5
+        }
+
+    def _calculate_trend(self, values: List[float]) -> str:
+        """Calculate trend direction from list of values."""
+        if len(values) < 2:
+            return "stable"
+
+        # Simple linear trend
+        n = len(values)
+        x = list(range(n))
+
+        # Calculate slope
+        x_mean = sum(x) / n
+        y_mean = sum(values) / n
+
+        numerator = sum((x[i] - x_mean) * (values[i] - y_mean) for i in range(n))
+        denominator = sum((x[i] - x_mean) ** 2 for i in range(n))
+
+        if denominator == 0:
+            return "stable"
+
+        slope = numerator / denominator
+
+        # Determine trend based on slope
+        if slope > 0.1:
+            return "improving"
+        elif slope < -0.1:
+            return "declining"
+        else:
+            return "stable"
